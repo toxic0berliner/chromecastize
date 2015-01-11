@@ -280,7 +280,7 @@ process_file() {
 			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | bc | cut -d"." -f1)
 			ffmpeg -vstats_file $TEMPDIR/vstats -y -i "$FILE" -c:v libx264 -profile:v high -level 5 -preset slow -b:v $VIDEOBITRATE -b:a $AUDIOBITRATE -pass 2 "$OUTPUT" 2>/dev/null &
 	        PID=$! &&
-	        echo -e "\n\tPID de ffmpeg = $PID - Duration: $DUR - Frames: $TOT_FR"
+	        echo -e "\tPID of ffmpeg = $PID - Duration: $DUR - Frames: $TOT_FR"
 	        display                               # Show progress.
 			if [ -f $OUTPUT ] ; then
 				SECONDPASSSUCCESS=true
