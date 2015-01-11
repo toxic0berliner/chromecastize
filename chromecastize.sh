@@ -62,6 +62,7 @@ function ctrl_c() {
 	cleanup_temp
 
 	echo -e "$bldwht$bakred Cleanup complete. Exiting.$txtrst"
+	exit 1
 }
 
 is_supported_ext() {
@@ -122,7 +123,7 @@ while [ -e /proc/$PID ]; do                         # Is FFmpeg running?
 #    VSTATS=$(awk -W interactive '{gsub(/frame=/, "")}/./{line=$1-1} END{print line}' $TEMPDIR/vstats) # Parse vstats file.
 	VSTATS="init"
 	if [ -f $TEMPDIR/vstats ] ; then 
-		VSTATS=`cat $TEMPDIR/vstats | tail -1 | sed 's/\r/\n/g' | tail -1 | sed "s/.*frame= \([^[:blank:]]*\) .*/\1/" | tail -1`
+		VSTATS=`cat $TEMPDIR/vstats | tail -1 | sed 's/\r/\n/g' | tail -1 | sed "s/.*frame=\( *\)\([^[:blank:]]*\) .*/\2/" | tail -1`
 	fi
 	re='^[0-9]+$'
 	if [[ $VSTATS =~ $re ]] ; then
@@ -344,7 +345,7 @@ process_file() {
 			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | bc | cut -d"." -f1)
 			ffmpeg -y -i "$FILE" -c:v copy -level 5 -preset slow -b:a $AUDIOBITRATE "$OUTPUT" 2>$TEMPDIR/vstats &
 	        PID=$! &&
-	        echo -e "\n\tPID de ffmpeg = $PID - Duration: $DUR - Frames: $TOT_FR"
+	        echo -e "\tPID of ffmpeg = $PID - Duration: $DUR - Frames: $TOT_FR"
 			display                               # Show progress.    
 			if [ -f $OUTPUT ] ; then
 				SINGLEPASSSUCCESS=true
