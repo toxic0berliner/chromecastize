@@ -122,7 +122,7 @@ while [ -e /proc/$PID ]; do                         # Is FFmpeg running?
 #    VSTATS=$(awk -W interactive '{gsub(/frame=/, "")}/./{line=$1-1} END{print line}' $TEMPDIR/vstats) # Parse vstats file.
 	VSTATS="init"
 	if [ -f $TEMPDIR/vstats ] ; then 
-		VSTATS=`cat $TEMPDIR/vstats | tail -1 | sed "s/.*frame= \([^[:blank:]]*\) .*/\1/" | tail -1`
+		VSTATS=`cat $TEMPDIR/vstats | tail -1 | sed 's/\r/\n/g' | tail -1 | sed "s/.*frame= \([^[:blank:]]*\) .*/\1/" | tail -1`
 	fi
 	re='^[0-9]+$'
 	if [[ $VSTATS =~ $re ]] ; then
