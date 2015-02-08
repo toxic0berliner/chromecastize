@@ -78,23 +78,64 @@ cleanup_temp() {
 	fi
 }
 
-is_supported_vcodec() {
-	vcodec=$(ffprobe "$1" 2>&1|grep Video:|sed "s/.*Video: \([^[:blank:]]*\) .*/\1/")
+getVCodec() {
+  echo $($mediainfo --Output=XML "$1" 2>&1 |sed -n '/track type="Video"/,/track/p' | grep "Format" | head -n1 | sed -n '/Format/,/Format/p' | cut -d\> -f2 |cut -d\< -f1 | sed 's/^ *//;s/ *$//')
+}
 
-	if [[ "$vcodec" == "h264" ]]; then
+
+is_supported_vcodec() {
+	vcodec=$(getVCodec "$1")
+	if [[ "$vcodec" == "AVC" ]]; then
 		return 0
 	else
 		return 1
 	fi
 }
 
+getACodec() {
+  echo $($mediainfo --Output=XML "$1" 2>&1 |sed -n '/track type="Audio"/,/track/p' | grep "Format" | head -n1 | sed -n '/Format/,/Format/p' | cut -d\> -f2 |cut -d\< -f1 | sed 's/^ *//;s/ *$//')
+}
+
 is_supported_acodec() {
-	acodec=$(ffprobe "$1" 2>&1|grep Audio:|sed "s/.*Audio: \([^[:blank:]]*\) .*/\1/")
-	if [[ "$acodec" == "aac" ]]; then
+	acodec=$(getACodec "$1")
+	if [[ "$acodec" == "AAC" ]]; then
 		return 0
 	else
 		return 1
 	fi
+}
+
+getVBitrate() {
+  echo $($mediainfo --Output=XML "$1" 2>&1 |sed -n '/track type="Video"/,/track/p' | grep "Bit_rate" | head -n1 | sed -n '/Bit_rate/,/Bit_rate/p' | cut -d\> -f2 |cut -d\< -f1 | sed 's/ //g' | sed 's/Kbps/k/g' | sed 's/^ *//;s/ *$//')
+}
+
+getABitrate() {
+	abr=$($mediainfo --Output=XML "$1" 2>&1 |sed -n '/track type="Audio"/,/track/p' | grep "Bit_rate__" | head -n1 | sed -n '/Bit_rate/,/Bit_rate/p' | cut -d\> -f2 |cut -d\< -f1 | sed 's/ //g' | sed 's/Kbps/k/g' | sed 's/^ *//;s/ *$//')
+	if [ -z "$abr" ]; then
+		abr=$($mediainfo --Output=XML "$1" 2>&1 |sed -n '/track type="Audio"/,/track/p' | grep "Bit_rate>" | head -n1 | sed -n '/Bit_rate/,/Bit_rate/p' | cut -d\> -f2 |cut -d\< -f1 | sed 's/ //g' | sed 's/Kbps/k/g' | sed 's/^ *//;s/ *$//')
+	fi
+	echo $abr
+}
+
+getFPS() {
+	fps=$($mediainfo --Output=XML "$1" 2>&1 |sed -n '/track type="Video"/,/track/p' | grep "Frame_rate__" | head -n1 | sed -n '/Frame_rate/,/Frame_rate/p' | cut -d\> -f2 |cut -d\< -f1 | cut -d. -f1 |sed 's/ //g' | sed 's/^ *//;s/ *$//')
+	if [ -z "$fps" ]; then
+		fps=$($mediainfo --Output=XML "$1" 2>&1 |sed -n '/track type="Video"/,/track/p' | grep "Frame_rate>" | head -n1 | sed -n '/Frame_rate/,/Frame_rate/p' | cut -d\> -f2 |cut -d\< -f1 | cut -d. -f1 |sed 's/ //g' | sed 's/^ *//;s/ *$//')
+	fi
+	echo $fps
+}
+
+getDuration() {
+	dur=$($mediainfo --Output=XML --Full "$1" 2>&1 |sed -n '/track type="Video"/,/track/p' | grep "Duration__" | grep ":..:"  | head -n1 | cut -d\> -f2 | cut -d\< -f1 )
+	if [ -z "$dur" ]; then
+		dur=$($mediainfo --Output=XML --Full "$1" 2>&1 |sed -n '/track type="Video"/,/track/p' | grep "Duration>" | grep ":" | sed -n '/Duration/,/Duration/p' | cut -d\> -f2 |cut -d\< -f1 | cut -d. -f1 |sed 's/ //g' | sed 's/^ *//;s/ *$//')
+	fi
+	echo $dur
+}
+
+getFileSizeMB() {
+	blocks=$(stat "$1" | sed '2q;d' | cut -d: -f2 | sed 's/^ *//;s/ *$//' | cut -d\  -f1)
+	echo $($blocks/1024/1024)
 }
 
 show_prog_bar() {
@@ -131,9 +172,9 @@ while [ -e /proc/$PID ]; do                         # Is FFmpeg running?
 		    FR_CNT=$VSTATS
 		    PERCENTAGE=$(( 100 * FR_CNT / TOT_FR ))     # Progbar calc.
 		    ELAPSED=$(( $(date +%s) - START )); echo $ELAPSED > $TEMPDIR/elapsed.value
-		    ETA=$(date -d @$(awk 'BEGIN{print int(('$ELAPSED' / '$FR_CNT') * ('$TOT_FR' - '$FR_CNT'))}') -u +%H:%M:%S)   # ETA calc.
+		    ETA=$(awk 'BEGIN{print int(('$ELAPSED' / '$FR_CNT') * ('$TOT_FR' - '$FR_CNT'))}')   # ETA calc.
 		fi
-	    show_prog_bar " " $PERCENTAGE "\tFrame: $FR_CNT / $TOT_FR - Done: $(date -d @$ELAPSED -u +%H:%M:%S) Remaining: $ETA"
+	    show_prog_bar " " $PERCENTAGE "\tFrame: $FR_CNT / $TOT_FR - Done: $(convertsecs $ELAPSED) Remaining: $(convertsecs $ETA)"
 	fi
 done
 }
@@ -170,10 +211,10 @@ process_file() {
 
 	# test video codec
 	if is_supported_vcodec "$FILE"; then
-		echo -e "$txtgrn -$bldgrn video$txtgrn format is$bldgrn already correct$txtgrn (h264), no transcode required for video$txtrst"
+		echo -e "$txtgrn -$bldgrn video$txtgrn format is$bldgrn already correct$txtgrn (h264=AVC), no transcode required for video$txtrst"
 		TRANSCODEVIDEO=false
 	else
-		vcodec=$(ffprobe "$FILE" 2>&1|grep Video:|sed "s/.*Video: \([^[:blank:]]*\) .*/\1/")
+		vcodec=$(getVCodec "$FILE")
 		echo -e "$txtgrn -$bldgrn video$txtgrn needs to be transcoded from$bldgrn $vcodec to h264$txtrst"
 		TRANSCODEVIDEO=true
 	fi
@@ -183,7 +224,7 @@ process_file() {
 		echo -e "$txtgrn -$bldgrn audio$txtgrn format is$bldgrn already correct$txtgrn (aac), no transcode required for video$txtrst"
 		TRANSCODEAUDIO=false
 	else
-		acodec=$(ffprobe "$FILE" 2>&1|grep Audio:|sed "s/.*Audio: \([^[:blank:]]*\) .*/\1/")
+		acodec=$(getACodec "$1")
 		echo -e "$txtgrn -$bldgrn audio$txtgrn needs to be transcoded from$bldgrn $acodec to aac$txtrst"
 		TRANSCODEAUDIO=true
 	fi
@@ -202,7 +243,7 @@ process_file() {
 	if [ -f "$OUTPUT" ]; then
 		echo -e "$txtylw The output$bldylw file already exists.$txtylw ($OUTPUT)$bldylw Skipping$txtylw this file.$txtrst"
 		if ($DRYRUN); then
-			echo -e "$txtylw This is a$bldylw DRYRUN$txtylw so we will continue. Otherwise, we would havestopped here.$txtrst"
+			echo -e "$txtylw This is a$bldylw DRYRUN$txtylw so we will continue. Otherwise, we would haves topped here.$txtrst"
 		else
 			continue
 		fi
@@ -210,16 +251,9 @@ process_file() {
 
 	
 	# obtaining video and audio bitrate to achieve same file size.
-	# try to obtain bitrate of the video only :
-	VIDEOBITRATE=$(ffprobe "$FILE" 2>&1|grep Video:|sed "s/.* \([0-9]*\) \([km]*\)b\/s.*/\1\2/")
-	# if we can't get the bitrate of the video, let's fallback to the overall bitrate
-	if [[ $VIDEOBITRATE == *"Video"* ]]
-	then
-		VIDEOBITRATE=$(ffprobe "$FILE" 2>&1|grep bitrate |sed "s/.*bitrate: \([0-9]*\) \([km]*\).*/\1\2/")
-	fi
-	# and finish with obtaining the audio bitrate
-	AUDIOBITRATE=$(ffprobe "$FILE" 2>&1|grep Audio:|sed "s/.* \([0-9]*\) \([km]*\)b\/s.*/\1\2/")
-	
+	VIDEOBITRATE=$(getVBitrate "$FILE")
+	AUDIOBITRATE=$(getABitrate "$FILE")
+
 	if ($TRANSCODEVIDEO); then # we'll take the "long" 2 pass method
 
 		echo -e "$txtylw Starting$bldylw First Pass$txtrst"
@@ -231,12 +265,12 @@ process_file() {
 			FIRSTPASSSUCCESS=true
 		else
 			# Get duration and PAL/NTSC fps then calculate total frames.
-			FPS=$(ffprobe "$FILE" 2>&1 | sed -n "s/.*, \(.*\) tbr.*/\1/p")
-			DUR=$(ffprobe "$FILE" 2>&1 | sed -n "s/.* Duration: \([^,]*\), .*/\1/p")
+			FPS=$(getFPS "$FILE")
+			DUR=$(getDuration "$FILE")
 			HRS=$(echo $DUR | cut -d":" -f1)
 			MIN=$(echo $DUR | cut -d":" -f2)
 			SEC=$(echo $DUR | cut -d":" -f3)
-			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | bc | cut -d"." -f1)
+			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | $bc | cut -d"." -f1)
 			ffmpeg -vstats_file $TEMPDIR/vstats -i "$FILE" -c:v libx264 -profile:v high -level 5 -preset slow -b:v $VIDEOBITRATE -an -pass 1 "$OUTPUT" 2>/dev/null &
 	        PID=$! &&
 	        echo -e "\tPID of ffmpeg = $PID - Duration: $DUR - Frames: $TOT_FR"
@@ -273,12 +307,12 @@ process_file() {
 			rm -f $TEMPDIR/elapsed.value
 
 			# Get duration and PAL/NTSC fps then calculate total frames.
-			FPS=$(ffprobe "$FILE" 2>&1 | sed -n "s/.*, \(.*\) tbr.*/\1/p")
-			DUR=$(ffprobe "$FILE" 2>&1 | sed -n "s/.* Duration: \([^,]*\), .*/\1/p")
+			FPS=$(getFPS "$FILE")
+			DUR=$(getDuration "$FILE")
 			HRS=$(echo $DUR | cut -d":" -f1)
 			MIN=$(echo $DUR | cut -d":" -f2)
 			SEC=$(echo $DUR | cut -d":" -f3)
-			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | bc | cut -d"." -f1)
+			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | $bc | cut -d"." -f1)
 			ffmpeg -vstats_file $TEMPDIR/vstats -y -i "$FILE" -c:v libx264 -profile:v high -level 5 -preset slow -b:v $VIDEOBITRATE -b:a $AUDIOBITRATE -pass 2 "$OUTPUT" 2>/dev/null &
 	        PID=$! &&
 	        echo -e "\tPID of ffmpeg = $PID - Duration: $DUR - Frames: $TOT_FR"
@@ -314,9 +348,9 @@ process_file() {
 		sizeoriginal=0
 		sizetranscoded=0
 		if [ -f $FILE ] ; then
-			sizeoriginal=$(($(stat -c%s "$FILE")/1024/1024))
+			sizeoriginal=$(getFileSizeMB "$FILE")
 			if [ -f $OUTPUT ] ; then
-				sizetranscoded=$(($(stat -c%s "$OUTPUT")/1024/1024))
+				sizetranscoded=$(getFileSizeMB "$OUTPUT")
 			else
 				sizeoriginal=0
 				sizetranscoded=0
@@ -337,12 +371,12 @@ process_file() {
 			echo -e ffmpeg -y -i \'"$FILE"\' -c:v copy -level 5 -preset slow -b:a $AUDIOBITRATE -pass 2 \'"$OUTPUT"\' -loglevel fatal
 			SINGLEPASSSUCCESS=true
 		else
-			FPS=$(ffprobe "$FILE" 2>&1 | sed -n "s/.*, \(.*\) tbr.*/\1/p")
-			DUR=$(ffprobe "$FILE" 2>&1 | sed -n "s/.* Duration: \([^,]*\), .*/\1/p")
+			FPS=$(getFPS "$FILE")
+			DUR=$(getDuration "$FILE")
 			HRS=$(echo $DUR | cut -d":" -f1)
 			MIN=$(echo $DUR | cut -d":" -f2)
 			SEC=$(echo $DUR | cut -d":" -f3)
-			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | bc | cut -d"." -f1)
+			TOT_FR=$(echo "($HRS*3600+$MIN*60+$SEC)*$FPS" | $bc | cut -d"." -f1)
 			ffmpeg -y -i "$FILE" -c:v copy -level 5 -preset slow -b:a $AUDIOBITRATE "$OUTPUT" 2>$TEMPDIR/vstats &
 	        PID=$! &&
 	        echo -e "\tPID of ffmpeg = $PID - Duration: $DUR - Frames: $TOT_FR"
@@ -368,11 +402,11 @@ process_file() {
 		echo -e "$bldgrn Total (single pass) transcoding time is $(convertsecs $total_duration)."
 
 		TotalNbFileTranscoded=$(($TotalNbFileTranscoded + 1))
-		sizeoriginal=$(($(stat -c%s "$FILE")/1024/1024))
+		sizeoriginal=$(getFileSizeMB "$FILE")
 		if ($DRYRUN); then
 			sizetranscoded=$sizeoriginal
 		else
-			sizetranscoded=$(($(stat -c%s "$OUTPUT")/1024/1024))
+			sizetranscoded=$(getFileSizeMB "$OUTPUT")
 		fi
 		TotalSizeInflation=$(($sizetranscoded - $sizeoriginal))
 		TotalSizeTranscoded=$(($TotalSizeTranscoded + $sizeoriginal))
@@ -447,12 +481,27 @@ print_help() {
 # MAIN PROGRAM #
 ################
 
-# test if `ffprobe` is available
-FFPROBE=`which ffprobe`
-if [ -z $FFPROBE ]; then
-	echo -e "$bldred ffprobe$txtred is not available, please install it$txtrst"
-	exit 1
+# test if `mediainfo` is available
+mediainfo=`which mediainfo`
+if [ -z $mediainfo ]; then
+	mediainfo=/var/packages/mediainfo/target/bin/mediainfo
+	if (! [ -f $mediainfo ]); then
+		echo -e "$bldred mediainfo$txtred is not available, please install it"
+		exit 1
+	fi
 fi
+
+# test if `mediainfo` is available
+bc=`which bc`
+if [ -z $bc ]; then
+	bc=/opt/bin/bc
+	if (! [ -f $bc ]); then
+		echo -e "$bldred bc$txtred is not available, please install it"
+		exit 1
+	fi
+fi
+
+
 
 # test if `ffmpeg` is available
 FFMPEG=`which avconv || which ffmpeg`
